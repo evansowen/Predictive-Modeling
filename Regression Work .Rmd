@@ -1,0 +1,715 @@
+---
+title: "Regression Modeling - Final Project"
+author: "Owen R. Evans"
+date: "8/22/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Need to remove NA values and outliers.   A few observations included individual responses with values >3.   Filtered the dataset to remove any total scores that are greater than allowed (27).  Calculated total score values for all entries.   A little imbalanced,  but okay.
+
+Need to determine what predictors to use.  NHANES has multiple worksheets - focus first on demographics, then include psychographics, health and fitness. 
+
+
+``` {r Data Pre-processing, Depression Score Tally}
+# NHANES 2017-2018 data at the following URL
+# Used this data due to pandemic issues and incomplete data sets for 2019-2020 data
+# Variable Descriptions - https://wwwn.cdc.gov/nchs/nhanes/search/variablelist.aspx?Component=Demographics
+
+library(rio)
+library(tidyverse)
+setwd("~/Desktop/Predictive Modeling Final Project")
+demo.df <-import("DEMO_J.XPT") # Demographics
+
+depr.df <-import("DPQ_J.XPT") # PHQ-09 Data
+
+# remove underscores (if necessary)
+X <- names(demo.df) 
+X <- sub("_", "", X)
+names(demo.df) <- X
+
+# Goal here is to build models to reliably predict the severity of depression symptoms
+## Predictors can include...
+### Weight, BMI, Age, Gender, Chronic Health Issues, Income, Physical Activity, etc. 
+
+# Need to calculate PHQ-09 Severity Score from DPQ (depression patient questionnaire)
+# These are my depressed observations
+
+# Lets pull the label descriptions from each variable
+DEPR.labels <- rep(1:ncol(depr.df),1)
+
+for (i in 1:ncol(depr.df)){
+  lab <- depr.df[,i] %>% attr('label')
+  DEPR.labels[i] <- lab
+}
+
+Depression.Labels <- data.frame("variable_name" = colnames(depr.df), "variable_description" = DEPR.labels)
+
+write.csv(Depression.Labels, "DEPR.Labels.csv")
+
+# Add total severity score
+library(sticky) # maintain attribute labels
+depr.df <- depr.df[,-11]
+depr.df <- na.omit(depr.df)
+depr.df$DepressionScore = rowSums(depr.df[,-1])
+depr.df <- filter(depr.df, DepressionScore<27)
+
+depr.df <- depr.df %>% 
+  mutate(DepressionLabel= case_when(
+    DepressionScore <= 4 ~ 'None',
+    DepressionScore > 4 & DepressionScore <= 9 ~ 'Mild',
+    DepressionScore > 9 & DepressionScore <= 14 ~ 'Moderate',
+    DepressionScore > 14 & DepressionScore <= 19 ~ 'Moderately Severe',
+    DepressionScore > 19 & DepressionScore <= 27 ~ 'Severe',)
+  )
+
+depr.df<- dplyr::select(depr.df, SEQN, DepressionScore, DepressionLabel)
+    
+# Look at Histogram of Total Severity Scores
+Tabulated.Scores <- depr.df %>% group_by(DepressionLabel) %>% 
+  summarize (frequency = n())
+write.csv(Tabulated.Scores, "TabulatedScores.csv")
+
+```
+
+``` {r Initial Variable Selection, Demographics}
+
+demo.df <- sticky_all(demo.df)
+demo.df <- dplyr::select(demo.df, SEQN, RIAGENDR, RIDAGEYR, 
+                  RIDRETH1, DMDHREDZ, DMDHRMAZ, INDFMIN2)
+
+# Pull Demo Variable Labels
+demo.labels <- rep(1:ncol(demo.df),1)
+
+for (i in 1:ncol(demo.df)){
+  lab <- demo.df[,i] %>% attr('label')
+  demo.labels[i] <- lab
+}
+
+Demo.Labels <- data.frame("variable_name" = colnames(demo.df), "variable_description" = demo.labels)
+
+write.csv(Demo.Labels, "DemoLabels.csv")
+
+```
+
+``` {r Body Measures}
+# Use to pull bodymass index, weight, height
+bmx.df <-import("BMX_J.XPT")
+bmx.df <- sticky_all(bmx.df)
+bmx.df <- dplyr::select(bmx.df, SEQN, BMXWT, BMXHT, BMXBMI)
+
+bmx.labels <- rep(1:ncol(bmx.df),1)
+
+for (i in 1:ncol(bmx.df)){
+  lab <- bmx.df[,i] %>% attr('label')
+  bmx.labels[i] <- lab
+}
+
+bmx.Labels <- data.frame("variable_name" = colnames(bmx.df), "variable_description" = bmx.labels)
+
+write.csv(bmx.Labels, "bmxLabels.csv")
+
+```
+
+``` {r Cholesterol}
+chol.df <-import("BPQ_J.XPT")
+chol.df <- sticky_all(chol.df)
+chol.df <- dplyr::select(chol.df, SEQN, BPQ080)
+
+chol.labels <- rep(1:ncol(chol.df),1)
+
+for (i in 1:ncol(chol.df)){
+  lab <- chol.df[,i] %>% attr('label')
+  chol.labels[i] <- lab
+}
+
+chol.Labels <- data.frame("variable_name" = colnames(chol.df), "variable_description" = chol.labels)
+
+write.csv(chol.Labels, "cholLabels.csv")
+
+```
+
+``` {r Alcohol Use}
+Alcohol.df <- import("ALQ_J.XPT")
+Alcohol.df <- sticky_all(Alcohol.df)
+Alcohol.df <- dplyr::select(Alcohol.df, SEQN, ALQ130)
+sum(is.na(Alcohol.df$ALQ130)) # lots of NA's, assume zero?
+Alcohol.df[is.na(Alcohol.df)] <- 0
+
+
+Alcohol.labels <- rep(1:ncol(Alcohol.df),1)
+
+for (i in 1:ncol(Alcohol.df)){
+  lab <- Alcohol.df[,i] %>% attr('label')
+  Alcohol.labels[i] <- lab
+}
+
+Alcohol.Labels <- data.frame("variable_name" = colnames(Alcohol.df), "variable_description" = Alcohol.labels)
+
+write.csv(Alcohol.Labels, "AlcoholLabels.csv")
+
+```
+
+``` {r General Health Status}
+
+genhealth.df <-import("HSQ_J.XPT")
+genhealth.df <- sticky_all(genhealth.df)
+genhealth.df <- dplyr::select(genhealth.df, SEQN, HSD010)
+sum(is.na(genhealth.df$HSD010))
+
+genhealth.labels <- rep(1:ncol(genhealth.df),1)
+
+for (i in 1:ncol(genhealth.df)){
+  lab <- genhealth.df[,i] %>% attr('label')
+  genhealth.labels[i] <- lab
+}
+
+genhealth.Labels <- data.frame("variable_name" = colnames(genhealth.df), "variable_description" = genhealth.labels)
+
+write.csv(genhealth.Labels, "genhealthLabels.csv")
+
+```
+
+``` {r SUN Exposure}
+
+SunEx.df <- import("DEQ_J.XPT")
+SunEx.df <- sticky_all(SunEx.df)
+SunEx.df <- dplyr::select(SunEx.df, SEQN, DED120, DED125)
+sum(is.na(SunEx.df$DED125))
+
+sunex.Labels <- rep(1:ncol(SunEx.df),1)
+
+for (i in 1:ncol(SunEx.df)){
+  lab <- SunEx.df[,i] %>% attr('label')
+  sunex.Labels[i] <- lab
+}
+
+sunex.Labels <- data.frame("variable_name" = colnames(SunEx.df), "variable_description" = sunex.Labels)
+
+write.csv(sunex.Labels, "sunexLabels.csv")
+
+```
+
+``` {r}
+#Poverty Level
+poverty.df <- import("INQ_J.XPT")
+poverty.df <- sticky_all(poverty.df)
+poverty.df <- dplyr::select(poverty.df, SEQN, INDFMMPI) # poverty index
+sum(is.na(poverty.df$INDFMMPI)) 
+
+poverty.Labels <- rep(1:ncol(poverty.df),1)
+
+for (i in 1:ncol(poverty.df)){
+  lab <- poverty.df[,i] %>% attr('label')
+  poverty.Labels[i] <- lab
+}
+
+poverty.Labels <- data.frame("variable_name" = colnames(poverty.df), "variable_description" = poverty.Labels)
+
+write.csv(poverty.Labels, "povertyLabels.csv")
+
+```
+
+``` {r Drug Use}
+drug.df <- import("DUQ_J.XPT")
+drug.df <- sticky_all(drug.df)
+drug.df <- dplyr::select(drug.df, SEQN, DUQ200) # poverty index
+# Some NA's here
+
+```
+
+``` {r Hours Worked}
+
+hoursworked.df <- import("OCQ_J.XPT")
+hoursworked.df <- sticky_all(hoursworked.df)
+hoursworked.df <- dplyr::select(hoursworked.df, SEQN, OCQ180)
+hoursworked.df[is.na(hoursworked.df)] <- 0
+
+hoursworked.Labels <- rep(1:ncol(hoursworked.df),1)
+
+for (i in 1:ncol(hoursworked.df)){
+  lab <- hoursworked.df[,i] %>% attr('label')
+ hoursworked.Labels[i] <- lab
+}
+
+hoursworked.Labels <- 
+  data.frame("variable_name" = colnames(hoursworked.df), "variable_description" = hoursworked.Labels)
+
+write.csv(hoursworked.Labels, "hoursworkedLabels.csv")
+
+```
+
+``` {r Sedentary Activity}
+sed.df <- import("PAQ_J.XPT")
+sed.df <- sticky_all(sed.df)
+sed.df <- dplyr::select(sed.df, SEQN, PAD680, PAD675) # time sitting
+
+
+sed.Labels <- rep(1:ncol(sed.df),1)
+
+for (i in 1:ncol(sed.df)){
+  lab <- sed.df[,i] %>% attr('label')
+ sed.Labels[i] <- lab
+}
+
+sed.Labels <- 
+  data.frame("variable_name" = colnames(sed.df), "variable_description" = sed.Labels)
+
+write.csv(sed.Labels, "sedLabels.csv")
+
+```
+
+``` {r, sleeping hours}
+sleep.df <- import("SLQ_J.XPT")
+sleep.df <- sticky_all(sleep.df)
+sleep.df <- dplyr::select(sleep.df, SEQN, SLD012, SLD013, SLQ050, SLQ120) # hours of sleep
+
+sleep.Labels <- rep(1:ncol(sleep.df),1)
+
+for (i in 1:ncol(sleep.df)){
+  lab <- sleep.df[,i] %>% attr('label')
+ sleep.Labels[i] <- lab
+}
+
+sleep.Labels <- 
+  data.frame("variable_name" = colnames(sleep.df), "variable_description" = sleep.Labels)
+
+write.csv(sleep.Labels, "sleepLabels.csv")
+
+```
+
+
+``` {r , data join}
+
+# probably need to add some more predictors
+# smoking, or something else
+
+vars.chosen <- rbind(sleep.Labels, chol.Labels, 
+                     genhealth.Labels,Alcohol.Labels, 
+                     bmx.Labels, demo.labels, 
+                     hoursworked.Labels, poverty.Labels, 
+                     sed.Labels, sunex.Labels)
+
+master.df <- merge(depr.df, demo.df, by="SEQN") %>%
+  merge(.,bmx.df, by = "SEQN") %>%
+  merge(.,chol.df, by = "SEQN") %>%
+  merge(.,Alcohol.df, by = "SEQN") %>%
+  merge(.,genhealth.df, by = "SEQN") %>%
+  merge(.,drug.df, by = "SEQN") %>%
+  merge(.,poverty.df, by = "SEQN") %>%
+  merge(.,hoursworked.df, by = "SEQN") %>%
+  merge(.,sed.df, by = "SEQN") %>%
+  merge(.,sleep.df, by = "SEQN")
+
+# Need to clean up
+# Recode categorical variables
+# Check for data entry errors/outliers
+# Masterplan for missing values. 
+
+############### FIX DEMO variables##############
+################################################
+
+# Recode GENDER into categorical with appropriate levels
+master.df$RIAGENDR <- as.factor(master.df$RIAGENDR)
+levels(master.df$RIAGENDR) <- c("Male", "Female")
+
+# Recode RACE into categorical with appropriate levels
+master.df$RIDRETH1 <- as.factor(master.df$RIDRETH1)
+levels(master.df$RIDRETH1) <- c("Mex_American", "Other_Hispanic", 
+                                "White", "Black", "Other")
+
+# Remove NA's in EDUCATION LEVEL - Replace with MODE
+master.df$DMDHREDZ <- master.df$DMDHREDZ %>% replace_na(2) 
+master.df$DMDHREDZ <- as.factor(master.df$DMDHREDZ)
+levels(master.df$DMDHREDZ) <- c("LessThanHS", "HS", "College")
+
+# Remove NA's in MARITAL STATUS - Replace with MODE
+master.df$DMDHRMAZ <- as.factor(master.df$DMDHRMAZ)
+master.df$DMDHRMAZ <- master.df$DMDHRMAZ %>% replace_na(1) 
+levels(master.df$DMDHRMAZ) <- c("Married", "Divorced/Sep", "Never Married")
+
+# INDFMIN2 - Annual Family Income
+# Remove 77, 99 and missing values
+# Replace missing values with mode
+master.df <- filter(master.df, INDFMIN2 !=99)
+master.df <- filter(master.df, INDFMIN2 !=77)
+master.df$INDFMIN2 <- master.df$INDFMIN2 %>% replace_na(15) 
+
+################ FIX BMX VARS ##################
+################################################
+
+# BMXWT - weight in kilograms
+# replace NA's with median values
+master.df$BMXWT <- master.df$BMXWT %>% 
+  replace_na(median(master.df$BMXWT, na.rm = TRUE))
+
+master.df$BMXHT <- master.df$BMXHT %>%
+  replace_na(median(master.df$BMXHT, na.rm = TRUE))
+
+master.df$BMXBMI <- master.df$BMXBMI %>%
+  replace_na(median(master.df$BMXBMI, na.rm = TRUE))  
+
+######################## BPQ_J - Cholesterol ###########
+########################################################
+master.df$BPQ080[master.df$BPQ080==9] <- 2
+master.df$BPQ080 <- as.factor(master.df$BPQ080)
+levels(master.df$BPQ080) <- c("Yes", "No")
+
+################ ALQ_J , Alcohol Use ###################
+########################################################
+master.df <- filter(master.df, ALQ130 !=999)
+master.df <- filter(master.df, ALQ130 !=777)
+
+master.df$ALQ130 <- master.df$ALQ130 %>% 
+  replace_na(median(master.df$ALQ130, na.rm = TRUE))
+
+########################################################
+############## HSQ_J - General Health Status ###########
+########################################################
+master.df <- filter(master.df, HSD010 !=9)
+master.df <- filter(master.df, HSD010 !=7)
+master.df$HSD010 <- as.factor(master.df$HSD010)
+levels(master.df$HSD010) <- c("Excellent", "VeryGood", 
+                                "Good", "Fair", "Poor")
+
+########################################################
+############## INQ_J - Income/Poverty ##################
+########################################################
+master.df$INDFMMPI <- master.df$INDFMMPI %>% 
+  replace_na(median(master.df$INDFMMPI, na.rm = TRUE))
+
+########################################################
+############## DUQ_J - Drug Use ########################
+########################################################
+master.df$DUQ200 <- as.factor(master.df$DUQ200)
+master.df$DUQ200<- master.df$DUQ200 %>% replace_na(1)
+levels(master.df$DUQ200) <- c("Yes", "No")
+# replace NA with mode (Yes for MJ use)
+
+########################################################
+############## OCQ_J - Hours Worked ####################
+########################################################
+master.df <- filter(master.df, OCQ180!=99999)
+master.df <- filter(master.df, OCQ180!=77777)
+# No NA's
+
+########################################################
+############## PAQ_J - Physical Act ####################
+########################################################
+master.df <- filter(master.df, PAD680!=9999)
+master.df$PAD675<- master.df$PAD675 %>% replace_na(0)
+master.df <- filter(master.df, PAD675!=9999)
+# PAD680 - Minutes of Sed Activity per Day
+# PAD675 - Minutes of Mod Activity per Day
+
+########################################################
+############## SLQ_J - Sleep ###########################
+########################################################
+master.df <- filter(master.df, SLQ050!=9)
+master.df <- filter(master.df, SLQ120!=9)
+
+master.df$SLD012<- master.df$SLD012 %>% 
+  replace_na(median(master.df$SLD012, na.rm = TRUE))
+
+master.df$SLD013<- master.df$SLD013 %>% 
+  replace_na(median(master.df$SLD013, na.rm = TRUE))
+
+master.df$SLQ050 <- as.factor(master.df$SLQ050)
+levels(master.df$SLQ050) <- c("Yes", "No")
+
+master.df$SLQ120 <- as.factor(master.df$SLQ120)
+levels(master.df$SLQ120) <- c("Never", "Rarely", "Sometimes", 
+                              "Often", "Always")
+
+
+#No Missing Values
+
+write.csv(master.df, "master.df.csv")
+
+```
+
+
+``` {r Multiple Linear Regression, AS IS, All Predictors}
+master.df.clean <- master.df[,c(-1,-3)]
+
+plot(master.df.clean[,1:10], col="blue")
+plot(master.df.clean[,c(1,11:20)], col="blue")
+hist((master.df.clean$DepressionScore))
+
+# Fit with all variables
+lm.fit.std <- lm(DepressionScore~., data=master.df.clean)
+lm.fit.std.preds <- predict(lm.fit.std, newdata = master.df.clean)
+summary(lm.fit.std)
+
+# MSE Error for entire dataset.  No train/test split
+lm.fit.MSE.full <- 
+  mean((lm.fit.std.preds-master.df.clean$DepressionScore)^2)
+lm.fit.MSE.full
+
+lm.fit.MSE.null <- 
+  mean((mean(master.df.clean$DepressionScore)-
+          master.df.clean$DepressionScore)^2)
+lm.fit.MSE.null
+
+# Plot of Actual vs. Predicted
+# High Scatter,  but general relationship
+plot(lm.fit.std.preds~master.df.clean$DepressionScore,
+     xlab="Actual Depression Score", ylab="Predicted Depression Score")
+abline(0,1, col="red")
+
+# p-values and regression coefficients are only valid if assumptions are met...
+plot(lm.fit.std)
+
+library(car)
+vif(lm.fit.std)
+
+lm.coef <- coef(lm.fit.std)
+write.csv(lm.coef, "lm.coef.csv")
+
+```
+
+``` {r Subsets}
+
+# Full Model, best subset selection
+library(leaps) # regsubsets function, library
+
+# best subset selection
+regfit.full.best <- regsubsets(DepressionScore~., 
+                               data=master.df.clean, 
+                              nvmax= 30)
+
+sum.reg.best <- summary(regfit.full.best) # can get information
+
+# Model Selection
+#################### ADJ R2 ###################
+which.max(sum.reg.best$adjr2)
+sum.reg.best$adjr2
+plot(sum.reg.best$adjr2, xlab='No. of Variables',
+     ylab='Adjusted R2',type='l')
+points(18,sum.reg.best$adjr2[18],pch=19,col='red')
+#18 Vars is Best
+reg.fit.vars.R2 <- coef(regfit.full.best,18)
+write.csv(reg.fit.vars.R2, "reg.fit.vars.R2.csv")
+# These are the 18 Best
+ 
+############## Mallows Cp #####################
+which.min(sum.reg.best$cp) # 22 variables
+sum.reg.best$cp
+plot(sum.reg.best$cp, xlab='No. of Variables',
+     ylab='Mallows Cp',type='l')
+points(22,sum.reg.best$cp[22],pch=19,col='red')
+reg.fit.vars.Cp <- coef(regfit.full.best,22)
+write.csv(reg.fit.vars.Cp, "reg.fit.vars.Cp.csv")
+
+############## BIC ############################
+which.min(sum.reg.best$bic) # 15 variables
+sum.reg.best$bic
+plot(sum.reg.best$bic, xlab='No. of Variables',
+     ylab='BIC',type='l')
+points(15,sum.reg.best$bic[15],pch=19,col='red')
+reg.fit.vars.BIC <- coef(regfit.full.best,15)
+write.csv(reg.fit.vars.BIC, "reg.fit.vars.bic.csv")
+
+############## Re-Fit Linear Model w/Ideal Subset ########
+subset.vars <- c("DepressionScore", "RIDAGEYR" ,"RIDRETH1", "DMDHRMAZ" , "INDFMIN2", "BMXBMI", "BPQ080" , "ALQ130" , "HSD010", "DUQ200", "INDFMMPI" , "OCQ180", "SLD013" , "SLQ050" , "SLQ120" )    
+master.subset <- master.df.clean[,subset.vars]
+
+subset.lm.fit <- lm(DepressionScore~., data=master.subset)
+summary(subset.lm.fit)
+
+MSE.preds <- predict(subset.lm.fit, newdata = master.subset)
+mean((MSE.preds-master.subset$DepressionScore)^2)
+
+plot(MSE.preds~master.subset$DepressionScore)
+abline(0,1, col="red")
+
+subset.coef <- as.data.frame(as.matrix(coef(subset.lm.fit)))
+write.csv(subset.coef, "subset.coef.csv")
+
+vif(subset.lm.fit) # eliminated multi-collinearity
+
+
+########## POWER TRANSFORM Y ########
+lm.fit.root <- lm(DepressionScore^(1/2)~., data=master.subset)
+summary(lm.fit.root)
+plot(lm.fit.root)
+
+MSE.preds.root <- predict(lm.fit.root, newdata = master.subset)
+plot(MSE.preds.root~(sqrt(master.subset$DepressionScore)))
+abline(0,1, col="red") # more normal distribution of residuals
+
+mean((MSE.preds.root^2-master.subset$DepressionScore)^2) 
+
+```
+
+
+``` {r Ridge and Lasso Regression}
+library(glmnet) # load library
+# Build model on training set (50/50)
+# Optimize model via CV
+
+set.seed(1)
+grid <- 10^seq(10, -2, length = 100) # grid of lambda values
+train <- sample(x=1:nrow(master.df.clean), size= nrow(master.df.clean)/2)
+test <- (-train) # negated index
+y <-master.df.clean$DepressionScore
+y.test <- y[test] # subset the entire y vector for test data
+y.train <- y[train] # subset the entire y vector for training data
+x <- model.matrix(DepressionScore~., data=master.df.clean)[,-1]
+x.train <- x[train,]
+
+ridge.fit <- glmnet(x=x.train, y=y.train, 
+                      alpha=0, lambda = grid, thresh = 1e-12)
+
+plot(ridge.fit)
+
+cv.ridge.out <- cv.glmnet(x.train, y.train, alpha = 0)
+plot(cv.ridge.out)
+bestlam <- cv.ridge.out$lambda.min
+bestlam # small lambda value
+
+# Check Test MSE
+ridge.fit.pred <- predict(ridge.fit, s=bestlam, 
+                           newx = x[-train,])
+
+ridge.MSE <- mean((ridge.fit.pred-master.df.clean$DepressionScore[-train])^2)
+ridge.MSE # not much better than standard lm
+
+# Fit to Full Model
+# Determine Coefficients
+ridge.final <- glmnet(x, y, lambda=bestlam, alpha=0)
+ridge.coef <- predict(ridge.final, type="coefficients")
+ridge.coef <-as.data.frame(as.matrix(ridge.coef))
+plot(ridge.fit, xvar = "lambda", label=TRUE)
+write.csv(ridge.coef, "ridge.coef.csv")
+
+# Calculate R2 Value of Ridge Model
+y.predicted <- predict(ridge.final, s = bestlam, newx = x)
+ridge.full.MSE <- mean((y.predicted-y)^2)
+
+#find SST and SSE
+ss.residuals <- sum((y - mean(y))^2)
+ss.error <- sum((y.predicted - y)^2)
+rsq <- 1 - ss.error/ss.residuals
+rsq #0.321
+
+```
+``` {r LASSO}
+# Fit Lasso on training Data
+lasso.fit = glmnet(x.train, y.train, alpha = 1, lambda = grid)
+
+# find optimal lambda by cross validation
+set.seed(1)
+cv.lasso = cv.glmnet(x.train, y.train, alpha = 1) # Fit lasso model on training data
+plot(cv.lasso) # Plot training MSE as a function of lambda
+bestlam.lasso <- cv.lasso$lambda.min # Select best lambda
+lasso.pred <- predict(lasso.fit, s = bestlam.lasso, newx = x[-train,]) # Calculate test MSE
+mean((lasso.pred - y.test)^2) # Test MSE, not much improvement
+
+# Fit Full Lasso Model
+lasso.fullfit <- glmnet(x, y, alpha = 1, lambda = bestlam.lasso) 
+lasso.full.coef <- predict(lasso.fullfit, type = "coefficients", s = bestlam)
+lasso.coef <-as.data.frame(as.matrix(lasso.full.coef))
+write.csv(lasso.coef, "lasso.coef.csv")
+
+# Calculate MSE of full model
+y.pred.lasso <- predict(lasso.fullfit, s = bestlam.lasso, newx = x)
+lasso.full.MSE <- mean((y.pred.lasso-y)^2)
+# 12.18
+
+#find SST and SSE
+ss.residuals <- sum((y - mean(y))^2)
+ss.error.lasso <- sum((y.pred.lasso - y)^2)
+rsq.lasso <- 1 - ss.error.lasso/ss.residuals
+rsq.lasso #0.319, about the same 
+
+```
+
+``` {r Random Forest Regression}
+library(randomForest)
+
+set.seed(1234)
+train <- sample(x=1:nrow(master.df.clean), 
+                size= nrow(master.df.clean)/2)
+test <- (-train) # negated index
+y <-master.df.clean$DepressionScore
+y.test <- y[test] # subset the entire y vector for test data
+y.train <- y[train] # subset the entire y vector for training data
+x.train <- x[train,]
+x.test <- x[test,]
+
+RF.model.1 <- randomForest(DepressionScore~., data=master.df.clean, 
+                           subset=train, mtry=1, importance=TRUE)
+
+RF.model1.pred <- predict(RF.model.1, newdata = master.df.clean[test,])
+RF.model.1.mse <- mean((RF.model1.pred-master.df.clean$DepressionScore[test])^2)
+
+RF.model.2 <- randomForest(DepressionScore~., data=master.df.clean, 
+                           subset=train, mtry=2, importance=TRUE)
+
+RF.model2.pred <- predict(RF.model.2, newdata = master.df.clean[test,])
+RF.model.2.mse <- mean((RF.model2.pred-master.df.clean$DepressionScore[test])^2)
+
+RF.model.3 <- randomForest(DepressionScore~., data=master.df.clean, 
+                           subset=train, mtry=3, importance=TRUE)
+
+RF.model.3.pred <- predict(RF.model.3, newdata = master.df.clean[test,])
+RF.model.3.mse <- mean((RF.model.3.pred-master.df.clean$DepressionScore[test])^2)
+
+RF.model.4 <- randomForest(DepressionScore~., data=master.df.clean, 
+                           subset=train, mtry=4, importance=TRUE)
+RF.model.4.pred <- predict(RF.model.4, newdata = master.df.clean[test,])
+RF.model.4.mse <- mean((RF.model.4.pred-master.df.clean$DepressionScore[test])^2)
+
+RF.model.5 <- randomForest(DepressionScore~., data=master.df.clean, 
+                           subset=train, mtry=5, importance=TRUE)
+RF.model5.pred <- predict(RF.model.5, newdata = master.df.clean[test,])
+RF.model.5.mse <- mean((RF.model5.pred-master.df.clean$DepressionScore[test])^2)
+
+RF.model.6 <- randomForest(DepressionScore~., data=master.df.clean, 
+                           subset=train, mtry=6, importance=TRUE)
+RF.model6.pred <- predict(RF.model.6, newdata = master.df.clean[test,])
+RF.model.6.mse <- mean((RF.model6.pred-master.df.clean$DepressionScore[test])^2)
+
+RF.mse <- c(RF.model.1.mse,RF.model.2.mse,RF.model.3.mse,RF.model.4.mse,RF.model.5.mse,RF.model.6.mse)
+mtry <- c(1,2,3,4,5,6)
+plot(RF.mse~mtry, type="l", xlab="mtry value", ylab="Test MSE")
+
+# Optimized RF Regression Model
+rf.final <- randomForest(DepressionScore~., data=master.df.clean, 
+                           , mtry=4, importance=TRUE)
+importance(rf.final)
+varImpPlot(rf.final)
+
+# Cutoff Values for Moderate and Severe Depression
+df.clean.severe <- filter(master.df.clean, DepressionScore!=0)
+
+set.seed(1234)
+train.rf <- sample(x=1:nrow(df.clean.severe), nrow(df.clean.severe)*0.5)
+test.rf <- -train.rf
+
+rf.severe <- randomForest(DepressionScore~., data=df.clean.severe, 
+                           subset=train.rf, mtry=4, importance=TRUE)
+
+RFpred <- predict(rf.severe, newdata = df.clean.severe[test,])
+RFpredMSE<- mean((RFpred-df.clean.severe$DepressionScore[test])^2)
+
+SSR=sum((RFpred-df.clean.severe$DepressionScore[test])^2)
+SSE=sum((df.clean.severe$DepressionScore[test]-mean(df.clean.severe$DepressionScore[test]))^2)
+RSQ<- 1-SSE/SSR
+
+plot(df.clean.severe$DepressionScore[test]~RFpred, 
+     xlab="Predicted", ylab="Actual")
+abline(0,1, col="red")
+
+plot(rf.severe)
+varImpPlot(rf.severe)
+
+```
+
+#END
+
+
