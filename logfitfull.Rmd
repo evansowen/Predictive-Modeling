@@ -1,0 +1,10 @@
+---
+title: "Untitled"
+author: "Owen R. Evans"
+date: "8/26/2021"
+output: word_document
+---
+``` {r }
+summary(log_fit.full)
+```
+
