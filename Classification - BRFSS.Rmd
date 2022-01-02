@@ -1,0 +1,385 @@
+---
+title: "Classification - BRFSS"
+author: "Owen R. Evans"
+date: "8/25/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+``` {r Data Processing}
+library(rio)
+library(tidyverse)
+setwd("~/Desktop/Predictive Modeling Final Project")
+df <-import("LLCP2019.XPT") # large file, takes 30-60seconds
+
+# remove underscores
+X <- names(df) 
+X <- sub("_", "", X)
+names(df) <- X
+
+# Select Key Variables
+# Demographics, Employment, Income, Exercise, Adverse Childhood, Dietary
+df.select <- dplyr::select(df, SEQNO, ADDEPEV3, SEXVAR, GENHLTH, MENTHLTH, HLTHPLN1,BPHIGH4, TOLDHI2, MARITAL, EDUCA, EMPLOY1, INCOME2, WEIGHT2, EXERANY2, ACEDEPRS, ACEDRINK, MARIJAN1, BMI5, DRNKWK1, PA2VIGM, FRUTDA2, GRENDA1, VEGESU1)
+
+remove(df, X)
+
+# Ever told you have a depressive disorder
+df.select <- filter(df.select, ADDEPEV3 !=9)
+df.select <- filter(df.select, ADDEPEV3 !=7)
+df.select$ADDEPEV3 <- df.select$ADDEPEV3 %>% replace_na(2)
+df.select$ADDEPEV3 <- as.factor(df.select$ADDEPEV3)
+levels(df.select$ADDEPEV3) <- c("Yes", "No")
+
+
+# Gender
+df.select$SEXVAR <- as.factor(df.select$SEXVAR)
+levels(df.select$SEXVAR) <- c("Male", "Female")
+
+# General Health
+df.select <- filter(df.select, GENHLTH !=9)
+df.select <- filter(df.select, GENHLTH !=7)
+df.select$GENHLTH <- df.select$GENHLTH %>% replace_na(2)
+levels(df.select$GENHLTH) <- c("Excellent", "VeryGood", 
+                              "Good", "Fair", "Poor")
+
+# No of Days per Month Mental Health is not good
+df.select <- filter(df.select, MENTHLTH !=99)
+df.select <- filter(df.select, MENTHLTH !=77)
+df.select$MENTHLTH[df.select$MENTHLTH==88] <- 0
+
+# On a HealthPlan?
+df.select <- filter(df.select, HLTHPLN1 !=9)
+df.select <- filter(df.select, HLTHPLN1 !=7)
+df.select$HLTHPLN1 <- df.select$HLTHPLN1 %>% replace_na(1)
+df.select$HLTHPLN1 <- as.factor(df.select$HLTHPLN1)
+levels(df.select$HLTHPLN1) <- c("Yes", "No")
+
+# Blood Pressure High?
+df.select <- filter(df.select, BPHIGH4 !=9)
+df.select <- filter(df.select, BPHIGH4 !=7)
+df.select$BPHIGH4[df.select$BPHIGH4==2] <- 3 #Pregnancy Special Case
+df.select$BPHIGH4 <- df.select$BPHIGH4 %>% replace_na(3)
+df.select$BPHIGH4 <- as.factor(df.select$BPHIGH4)
+levels(df.select$BPHIGH4) <- c("Yes", "No", "Borderline")
+
+# Told had high cholesterol
+df.select <- filter(df.select, TOLDHI2 !=9)
+df.select <- filter(df.select, TOLDHI2 !=7)
+df.select$TOLDHI2 <- df.select$TOLDHI2 %>% replace_na(2)
+df.select$TOLDHI2 <- as.factor(df.select$TOLDHI2)
+levels(df.select$TOLDHI2) <- c("Yes", "No")
+
+# Marital Status
+df.select$MARITAL[df.select$MARITAL==3] <- 2 
+df.select$MARITAL[df.select$MARITAL==4] <- 2 # Special Case
+df.select$MARITAL[df.select$MARITAL==5] <- 2 # Special Case
+df.select$MARITAL[df.select$MARITAL==6] <- 2 # Special Case
+df.select <- filter(df.select, MARITAL !=9)
+df.select$MARITAL <- as.factor(df.select$MARITAL)
+levels(df.select$MARITAL) <- c("Married", "NotMarried")
+
+# Education Level
+df.select <- filter(df.select, EDUCA !=9)
+df.select$EDUCA <- df.select$EDUCA %>% replace_na(6)
+df.select$EDUCA <- as.factor(df.select$EDUCA)
+levels(df.select$EDUCA) <- c("None", "Elementary", "SomeHS", "HSGrad", "SomeColl", "CollGrad")
+
+# Employment Status
+df.select <- filter(df.select, EMPLOY1 !=9)
+df.select$EMPLOY1 <- df.select$EMPLOY1 %>% replace_na(1)
+df.select$EMPLOY1 <- as.factor(df.select$EMPLOY1)
+levels(df.select$EMPLOY1) <- c("Employed", "SelfEmployed", 
+                               "UnempShort", "UnempLong", "HomeMaker",
+                               "Student", "Retired", "Unable")
+
+# Income
+df.select <- filter(df.select, INCOME2 !=99)
+df.select <- filter(df.select, INCOME2 !=77)
+df.select$INCOME2 <- df.select$INCOME2 %>% replace_na(8)
+df.select$INCOME2 <- as.factor(df.select$INCOME2)
+levels(df.select$INCOME2) <- c("<10K,", "10-15K", "15-20K", "20-25K",
+                               "25-35K", "35-50K", "50-75K",">75K")
+
+# WEIGHT2
+df.select <- filter(df.select, WEIGHT2 !=9999)
+df.select <- filter(df.select, WEIGHT2 !=7777)
+df.select <- filter(df.select, WEIGHT2 !=999)
+df.select <- mutate(df.select, 
+                    WEIGHT2 = case_when( WEIGHT2>8999 ~ (WEIGHT2-9000)*2.2,
+                                         TRUE ~ WEIGHT2))
+df.select$WEIGHT2 <- df.select$WEIGHT2 %>% 
+  replace_na(median(df.select$WEIGHT2, na.rm = TRUE))
+
+# EXERANY2 - Did you exercise in the last 30 days
+df.select <- filter(df.select, EXERANY2 !=9)
+df.select <- filter(df.select, EXERANY2 !=7)
+df.select$EXERANY2 <- df.select$EXERANY2 %>% replace_na(1)
+df.select$EXERANY2 <- as.factor(df.select$EXERANY2)
+levels(df.select$EXERANY2) <- c("Yes", "No")
+
+# ACEDEPRS - Ever lived with someone suicidal
+df.select$ACEDEPRS <- df.select$ACEDEPRS %>% replace_na(2)
+df.select <- filter(df.select, ACEDEPRS !=9)
+df.select <- filter(df.select, ACEDEPRS !=7)
+df.select$ACEDEPRS <- as.factor(df.select$ACEDEPRS)
+levels(df.select$ACEDEPRS) <- c("Yes", "No")
+
+# ACEDRINK - Ever lived with an alcoholic?
+df.select$ACEDRINK <- df.select$ACEDRINK %>% replace_na(2)
+df.select <- filter(df.select, ACEDRINK !=9)
+df.select <- filter(df.select, ACEDRINK !=7)
+df.select$ACEDRINK <- as.factor(df.select$ACEDRINK)
+levels(df.select$ACEDRINK) <- c("Yes", "No")
+
+# MARIJAN1 - days per month of MJ use 
+df.select$MARIJAN1 <- df.select$MARIJAN1 %>% replace_na(0)
+df.select <- filter(df.select, MARIJAN1 !=99)
+df.select <- filter(df.select, MARIJAN1 !=77)
+df.select <- filter(df.select, MARIJAN1 !=30) # outlier
+df.select$MARIJAN1[df.select$MARIJAN1==88] <- 0
+
+# BMI5 - BMI Continuous
+df.select$BMI5 <- df.select$BMI5 %>% 
+  replace_na(median(df.select$BMI5, na.rm = TRUE))
+df.select$BMI5 <- df.select$BMI5/100
+
+# DRNKWK1 - # alcoholic drinks per week, calculated 
+df.select$DRNKWK1[df.select$DRNKWK1==99900] <- 
+  median(df.select$DRNKWK1, na.rm = TRUE)
+
+# PA2VIGM - Calculated min of exercise per week
+df.select$PA2VIGM <- df.select$PA2VIGM %>% replace_na(0)
+df.select$PA2VIGM <- df.select$PA2VIGM/10
+
+# VEGESU1 - Calculated Veggies per Day
+df.select$VEGESU1 <- df.select$VEGESU1 %>% replace_na(0)
+df.select$VEGESU1 <- df.select$VEGESU1/100
+
+```
+
+``` {r Logistic Models}
+library(caret)
+library(MASS)
+library(caret)
+library(Metrics)
+
+df.clean <- df.select[,-1]
+df.clean <- na.omit(df.clean)
+log_fit.full <- glm(ADDEPEV3~., data=df.clean, family=binomial)
+log_fit.full <- update(log_fit.full, ~ . -BPHIGH4 - INCOME2 - FRUTDA2)
+summary(log_fit.full)
+
+# Check misclassification error for full model
+preds.full <- predict(log_fit.full, type="response")
+probs.full <- ifelse(preds.full >= 0.5, "No", "Yes")
+mean(probs.full!=df.clean$ADDEPEV3) # 16.5% misclassifcation
+confusionMatrix(as.factor(probs.full), reference=df.clean$ADDEPEV3)
+
+# Remove variables that are not statistically significant
+df.clean1<-df.clean[,c(-6, -11, -20),]
+
+# Split Train and Test
+set.seed(1234)
+train <- sample(1:nrow(df.clean1),nrow(df.clean1)/2)
+test <- -train
+
+log_fit.train <- glm(ADDEPEV3~., data=df.clean1[train,], family=binomial)
+preds.test <- predict(log_fit.train, 
+                       newdata = df.clean1[test,], type="response")
+probs.test <- ifelse(preds.test >= 0.5, "No", "Yes")
+mean(probs.test!=df.clean1$ADDEPEV3[test]) #16.5% misclassifcation
+confusionMatrix(as.factor(probs.test), reference=df.clean1$ADDEPEV3[test])
+f1(df.clean1$ADDEPEV3[test],as.factor(probs.test))
+
+
+# Null Model - Only slightly worst, 19.5% misclassification
+# Imbalanced dataset - responses
+preds.null <- rep("No", nrow(df.clean1))
+mean(preds.null!=df.clean1$ADDEPEV3[test]) 
+
+# Need AUC/ROC curves
+library(pROC)
+par(pty="s")
+roc(df.clean1$ADDEPEV3[train], log_fit.train$fitted.values, plot=TRUE)
+
+```
+LDA - Data set with categorical predictors - not ideal, but lets examine model. 
+
+``` {r LDA }
+library(MASS)
+
+lda.fit <- lda(ADDEPEV3~., data=df.clean1[train,])
+lda.fit
+plot(lda.fit, type="b")
+
+# Accuracy of LDA Fit - Test Set 
+lda.pred <- predict(lda.fit, newdata=df.clean1[test,])
+lda.preds <- lda.pred$class
+confusionMatrix(lda.preds, reference = df.clean1$ADDEPEV3[test])
+# Slight increase in sensitivity rate - true positives
+# No problem in finding folks without depression diagnosis
+
+lda.fit$means
+lda.fit$means[,2] #General Health
+lda.fit$means[,3] #Mental Health Poor
+lda.fit$means[,6] #Marital Status
+lda.fit$means[,26] # Hours of Vigorous Exercise per Week
+lda.fit$means[,27] # Veggies (dietary)
+
+```
+
+``` {r QDA}
+# Relieve constant covariance constraint. 
+# Would a a more flexible classifier improve results?
+qda.fit <- qda(ADDEPEV3~.,, data=df.clean1[train,])
+qda.fit
+
+# Training Error
+qda.pred.train <- predict(qda.fit)
+confusionMatrix(as.factor(qda.pred.train$class), 
+                reference = df.clean1$ADDEPEV3[train])
+
+# Mean of each variable within each class
+# Disparate values indicate a discriminating variable
+qda.fit$means[,2] #General Health
+qda.fit$means[,3] #Mental Health Poor
+qda.fit$means[,6] #Marital Status
+qda.fit$means[,26] # Hours of Vigorous Exercise per Week
+qda.fit$means[,27] # Dark green veggies per day
+qda.fit$means
+
+# Potential overfit
+# Test Accuracy Drops
+qda.preds <- predict(qda.fit, newdata = df.clean[test,])
+confusionMatrix(as.factor(qda.preds$class), 
+                reference = df.clean1$ADDEPEV3[test])
+
+```
+``` {r Decision Trees}
+library(tree)
+tree.train <- tree(ADDEPEV3 ~.-MENTHLTH, data=df.clean1[train,])
+plot(tree.train)
+text(tree.train, pretty=0)
+
+tree.train.preds <- predict(tree.train, 
+                           newdata = df.clean1[-train,],
+                           type="class")
+mean(tree.train.preds!=df.clean1$ADDEPEV3[-train])
+confusionMatrix(tree.train.preds, reference=df.clean1$ADDEPEV3[-train])
+
+# Zero sensitivity - can not learn pattern of minority class
+df.minor <- filter(df.clean1, ADDEPEV3=="Yes") # depressed class
+df.major <- filter(df.clean1, ADDEPEV3=="No") # normal class
+
+set.seed(1234)
+sub <- sample(1:nrow(df.major), size=nrow(df.minor))
+df.major.sub <- df.major[sub,]
+df.balanced <- rbind(df.major.sub, df.minor)
+
+# Fit tree to more balanced dataset
+tree.train2 <- tree(ADDEPEV3 ~.-MENTHLTH, data=df.balanced[train,])
+plot(tree.train2)
+text(tree.train2, pretty=0)
+
+tree.train2.preds <- predict(tree.train2, 
+                           newdata = df.balanced[-train,],
+                           type="class")
+mean(tree.train2.preds!=df.balanced$ADDEPEV3[-train])
+confusionMatrix(tree.train2.preds, reference=df.balanced$ADDEPEV3[-train])
+# Improved specificity.
+
+
+## perform CV on training data to determine ideal size
+set.seed(7)
+cv.tree2 <- cv.tree(tree.train2, FUN= prune.misclass)
+names(cv.tree2)
+cv.tree2  # No need to prune
+
+```
+
+``` {r Bagged Tree, Ensemble Method}
+library(randomForest)
+set.seed(1234)
+train<-sample(x=1:nrow(df.balanced), nrow(df.balanced)*0.5)
+test<--train
+
+bag.tree <- randomForest(ADDEPEV3~.-MENTHLTH, data=df.balanced, 
+                           subset=train, mtry=17, importance=TRUE)
+# takes 2-3min
+bag.tree
+summary(bag.tree)
+plot(bag.tree)
+
+# how does the bagged model perform on test data?
+bag.tree.preds <- predict (bag.tree, newdata = df.balanced[-train,])
+mean(bag.tree.preds!=df.balanced$ADDEPEV3[-train]) # 34.8% misclass error
+confusionMatrix(bag.tree.preds, reference=df.balanced$ADDEPEV3[-train])
+
+og.preds <- predict(bag.tree, newdata = df.clean1)
+confusionMatrix(og.preds, reference=df.clean1$ADDEPEV3)
+# applied tree to the same original imbalanced data set
+# achieved 82% specificity.
+
+importance(bag.tree)
+varImpPlot(bag.tree)
+
+```
+
+``` {r Random Forest}
+
+rf.tree <- randomForest(ADDEPEV3~.-MENTHLTH, data=df.balanced, 
+                           subset=train, mtry=4, importance=TRUE)
+# square root of number of predictors
+
+# takes 3-5min
+rf.tree
+summary(bag.tree)
+plot(bag.tree)
+
+# how does the bagged model perform on test data?
+rf.tree.preds <- predict (rf.tree, newdata = df.balanced[-train,])
+mean(rf.tree.preds!=df.balanced$ADDEPEV3[-train]) # 34.8% misclass error
+confusionMatrix(rf.tree.preds, reference=df.balanced$ADDEPEV3[-train])
+
+og.preds <- predict(rf.tree, newdata = df.clean1)
+confusionMatrix(og.preds, reference=df.clean1$ADDEPEV3)
+# applied tree to the same original imbalanced data set
+# lower specificity
+
+importance(rf.tree)
+varImpPlot(rf.tree)
+
+```
+
+``` {r boosted trees}
+library(gbm)
+# Build boosted model on balanced dataset
+boost.tree <- gbm(ADDEPEV3~.-MENTHLTH, data = df.balanced[train, ], 
+                    distribution = "gaussian", 
+                    n.trees = 5000, interaction.depth = 1)
+
+summary(boost.tree)
+
+# partial dependence plots
+plot(boost.tree, i = "BMI5")
+plot(boost.tree, i = "EMPLOY1")
+plot(boost.tree)
+
+# Use boosted model to predict test error
+pred.boost <- predict.gbm(boost.tree, newdata = df.balanced[-train, ], 
+                      n.trees = 5000, type="response")
+pred.boost <- ifelse(pred.boost>1.5, "No", "Yes")
+
+boost.test.error <- mean(pred.boost!=df.balanced$ADDEPEV3[-train])
+confusionMatrix(as.factor(pred.boost), reference=df.balanced$ADDEPEV3[-train])
+
+
+
+```
+
+
+
+

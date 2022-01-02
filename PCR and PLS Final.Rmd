@@ -1,0 +1,278 @@
+---
+title: "Final PCR and PLS"
+author: "Owen R. Evans"
+date: "8/25/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Using dietary data from 2013-2014 NHANES.  Need demographic and depression data for the same cohort. 
+
+``` {r Data Processing}
+library(rio)
+library(tidyverse)
+setwd("~/Desktop/Predictive Modeling Final Project")
+depr.df <-import("DPQ_H_2014.XPT") # PHQ-09 Data, Severity of Depression
+
+library(sticky) # maintain attribute labels
+depr.df <- select(depr.df, -11)
+depr.df <- na.omit(depr.df)
+depr.df$DepressionScore = rowSums(depr.df[,-1])
+depr.df <- filter(depr.df, DepressionScore<27)
+depr.df<- select(depr.df, SEQN, DepressionScore) # Total PHQ-09 Score
+
+# Import quantitative dietary data
+# Food nutrients per day - multiple entries per day
+# Need to aggregate nutrient intake per SEQN
+
+diet.df <-import("DR1IFF_H_2014.XPT")
+diet.df <- select(diet.df, SEQN, 20:84)
+sticky_all(diet.df)
+
+# aggregate daily dietary intake for each unique SEQN/observation
+unique.seqn <- diet.df$SEQN
+sticky_all(diet.df)
+diet_agg.df <- aggregate(diet.df, data.frame(unique.seqn), sum)
+diet_agg.df$SEQN <- NULL
+
+# Import demographic data
+demo.df <-import("DEMO_H_2014.XPT") # Demographics
+demo.df <- sticky_all(demo.df)
+demo.df <- select(demo.df, SEQN, RIAGENDR, RIDAGEYR)
+
+# Merge demographic with depression scores
+sticky_all(demo.df)
+master_depr.df <- merge(depr.df, demo.df, by="SEQN")
+summary(master_depr.df)
+
+# filter master for males, aged 18-40
+# merge with dietary data
+# scale predictors 
+master_depr.males.df <- filter(master_depr.df, RIAGENDR==1)
+master_depr.males.df <- filter(master_depr.males.df, 
+                               RIDAGEYR >= 20 & RIDAGEYR <=40)
+master_diet_males.df <- merge(master_depr.males.df, diet_agg.df, by="SEQN")
+master_diet_males.df <- na.omit(master_diet_males.df)
+master_diet_males.df <- subset(master_diet_males.df, 
+                               select=-c(RIAGENDR, RIDAGEYR, SEQN))
+master_male_scaled.df <- as.data.frame(scale(master_diet_males.df[,-2]))
+
+# filter master for females, aged 18-40
+# merge with dietary data
+# scale predictors
+master_depr.females.df <- filter(master_depr.df, RIAGENDR==2)
+master_depr.females.df <- filter(master_depr.females.df, 
+                               RIDAGEYR >= 20 & RIDAGEYR <=40)
+master_diet_females.df <- 
+  merge(master_depr.females.df, diet_agg.df, by="SEQN")
+master_diet_females.df <- na.omit(master_diet_females.df)
+master_diet_females.df <- subset(master_diet_females.df, 
+                               select=-c(RIAGENDR, RIDAGEYR, SEQN))
+master_female_scaled.df <- as.data.frame(scale(master_diet_females.df[,-2]))
+
+
+
+```
+
+``` {r PCR Fit, Males}
+# NULL Model MSE
+mean_male.y <- mean(master_male_scaled.df$DepressionScore)
+null.MSE.male <- mean((master_male_scaled.df $DepressionScore-mean_male.y)^2)
+
+# OLS - standard linear fit
+lm.fit.male <- lm(DepressionScore~., data=master_male_scaled.df)
+summary(lm.fit.male)
+
+#pcr fit for male subgroup 
+library(pls)
+
+set.seed(1234)
+train.m <- sample(1:nrow(master_male_scaled.df ),
+                  0.5*nrow(master_male_scaled.df ))
+test.m <- -train.m
+
+# fit pcr model for training data
+pcr.fit.males<- pcr(DepressionScore~., 
+               data=master_male_scaled.df [train.m,], 
+               scale=TRUE, validation="CV")
+
+summary (pcr.fit.males)
+validationplot(pcr.fit.males, val.type="MSEP")
+
+# Calculate Test Error for 15 components
+pcr.pred.male <- predict(pcr.fit.males, 
+                         newdata = master_male_scaled.df [test.m,], ncomp=15)
+
+pcr.test.MSE.males <- mean((pcr.pred.male-master_male_scaled.df $DepressionScore[test.m])^2)
+pcr.test.MSE.males
+# high mean squared error compared to OLS, ridge or lasso.
+# same as null model - diet has no explanatory power
+
+# Fit Full Model
+# Plot Actual vs. Predicted
+pcr.fit.full.males <- pcr(DepressionScore ~., 
+                    data=master_male_scaled.df , ncomp = 19, scale=TRUE)
+pcr.preds.full.males <- predict(pcr.fit.full.males, newdata = master_male_scaled.df , ncomp=19)
+pcr.full.MSE.males <- 
+  mean((pcr.preds.full.males-master_diet_males.df $DepressionScore)^2)
+
+#17.7 MSE
+plot(pcr.fit.full.males)
+
+```
+
+``` {r PCR Fit, females}
+# NULL Model MSE
+mean_female.y <- mean(master_diet_females.df$DepressionScore)
+Null.MSE.Females <- mean((master_diet_females.df$DepressionScore-mean_female.y)^2)
+
+#pcr fit for female subgroup 
+library(pls)
+
+set.seed(1234)
+train.f <- sample(1:nrow(master_diet_females.df),
+                  0.5*nrow(master_diet_females.df))
+test.f <- -train.f
+
+# fit pcr model for training data
+pcr.fit.females<- pcr(DepressionScore~., 
+               data=master_diet_females.df[train.f,], 
+               scale=TRUE, validation="CV")
+
+summary (pcr.fit.females)
+validationplot(pcr.fit.females, val.type="MSEP")
+
+# Calculate Test Error for 3 components
+pcr.pred.female <- predict(pcr.fit.females, 
+                         newdata = master_diet_females.df[test.f,], ncomp=3)
+
+pcr.test.MSE.females <- mean((pcr.pred.female-master_diet_females.df$DepressionScore[test.f])^2)
+pcr.test.MSE.females
+# high mean squared error compared to OLS, ridge or lasso.
+# same as null model - diet has no explanatory power
+
+# Fit Full Model
+# Plot Actual vs. Predicted
+pcr.fit.full.females <- pcr(DepressionScore ~., 
+                    data=master_diet_females.df, ncomp = 4, scale=TRUE)
+pcr.preds.full.females <- predict(pcr.fit.full.females, newdata = master_diet_females.df, ncomp=4)
+pcr.full.MSE.females <- 
+  mean((pcr.preds.full.females-master_diet_females.df$DepressionScore)^2)
+
+#17.7 MSE
+plot(pcr.fit.full.females)
+
+```
+
+Efforts to model the severity of depression symptoms as a function of dietary intake via principal components regression or partial least squares were largely unsuccessful.  The models obtained did not improve predictive accuracy relative to that observed for a standard linear fit and that observed solely for the NULL model.   This highlights the difficulty in developing predictive models for human behavior and mental health.   Additionally, despite best attempts, the presence of several confounding variables (geography, race, gender, age, health issues, income) can significantly affect the predictive accuracy of such a model.  
+
+To demonstrate the utility of both PCR and PLS,  a new problem was explored.  Specifically,  the NHANES extensive data set on dietary intake can allow one to predict and determine the relationship between dietary intake and body mass index.  Both PCR and PLS are ideal for this effort, as the dataset contains a wealth of continuous and potentially collinear variables that may ultimately complicate models based upon standard least squares regression. 
+
+``` {r BMI vs. Dietary}
+
+# need BMI data
+body.df <- import("BMX_H.XPT")
+body.df <- sticky_all(body.df)
+body.df <- dplyr::select(body.df, SEQN, BMXBMI) 
+body.df <- na.omit(body.df)
+
+# Import quantitative dietary data
+# Food nutrients per day - multiple entries per day
+# Need to aggregate nutrient intake per SEQN
+
+diet.df <-import("DR1IFF_H_2014.XPT")
+diet.df <- dplyr::select(diet.df, SEQN, 20:84)
+sticky_all(diet.df)
+
+# aggregate daily dietary intake for each unique SEQN/observation
+SEQN <- diet.df$SEQN
+diet.df$SEQ1 <-diet.df$SEQN
+sticky_all(diet.df)
+diet_agg.df <- aggregate(diet.df, data.frame(SEQN), sum)
+diet_agg.df[,2] <- NULL
+diet_agg.df <- na.omit(diet_agg.df)
+
+# Import demographic data
+demo.df <-import("DEMO_H_2014.XPT") # Demographics
+demo.df <- sticky_all(demo.df)
+demo.df <- dplyr::select(demo.df, SEQN, RIAGENDR, RIDAGEYR)
+
+# Merge with Dietary Data
+master_diet.df <- merge(body.df, diet_agg.df, by="SEQN")
+master_diet.df <- dplyr::select(master_diet.df, -c(1))
+master_diet.df <- na.omit(master_diet.df)
+
+```
+
+``` {r PCR}
+#df.scaled <- as.data.frame(scale(master_diet.df))
+library(pls)
+set.seed(1234)
+train.f <- sample(1:nrow(master_diet.df),0.5*nrow(master_diet.df))
+test.f <- -train.f
+
+# fit pcr model to training data
+pcr.fit.bmi<- pcr(BMXBMI~., 
+               data=master_diet.df[train.f,], 
+               scale=TRUE, validation="CV")
+
+summary (pcr.fit.bmi)
+validationplot(pcr.fit.bmi, val.type="MSEP")
+
+# Calculate Test Error for 28 components
+pcr.pred.bmi <- predict(pcr.fit.bmi, 
+                         newdata = master_diet.df[test.f,], ncomp=28)
+
+pcr.test.MSE <- mean((pcr.pred.bmi-master_diet.df$BMXBMI[test.f])^2)
+pcr.test.MSE # A little better than NULL model
+
+pcr.null <- mean((mean(master_diet.df$BMXBMI)-master_diet.df$BMXBMI)^2)
+pcr.null # A little better
+
+```
+``` {r PLS}
+library(pls)
+set.seed(1234)
+train.g <- sample(1:nrow(master_diet.df),
+                  0.5*nrow(master_diet.df))
+test.g <- -train.g
+
+# fit pcr model for training data
+pls.fit<- plsr(BMXBMI~., 
+               data=master_diet.df[train.g,], 
+               scale=TRUE, validation="CV")
+
+summary (pls.fit)
+validationplot(pls.fit, val.type="MSEP")
+
+# Calculate Test Error for 5 components
+pls.pred <- predict(pls.fit, 
+                         newdata = master_diet.df[test.g,], ncomp=5)
+
+pls.test.MSE <- mean((pls.pred-master_diet.df$BMXBMI[test.g])^2)
+pls.test.MSE
+
+# Fit Full Model
+# Plot Actual vs. Predicted
+pls.fit.full<- plsr(BMXBMI ~., 
+                    data=master_diet.df, ncomp = 5, scale=TRUE)
+pls.preds.full <- predict(pls.fit.full, 
+                          newdata = master_diet.df, ncomp=5, scale=TRUE)
+pls.full.MSE<- 
+  mean((pls.preds.full-master_diet.df$BMXBMI)^2)
+pls.full.MSE
+
+plot(pls.fit.full)
+abline(0,1, col="red")
+
+plot(pcr.fit.bmi)
+abline(0,1, col="red")
+
+```
+
+
+
+
